@@ -1,0 +1,408 @@
+clc; clear;
+% to connect to COM32 using Matlab, no other program should be connected to
+% COM32, make sure the module is deleted from XCTU
+epsilon = 1.0;
+iter_num = 150;
+tol = 0.01;
+alpha = exp(log(tol)/iter_num);
+md = 0; bc = 0; it = 0;
+Batt_NC_command = 5;
+mode = 3;
+ 
+k = 1;
+% it = [0 0 0];
+fileID = fopen('Log.csv','w');
+fprintf(fileID,'%s, %s, %s, %s, %s, %s, %s,%s, %s, %s\n','iteration','Batt_comm','mode','Vdc_min1','Vdc_min2','Vload_NC1','Vload_NC2','final SOC1','final SOC2','reward');
+fclose(fileID);
+ 
+%SOC_init = (randi([2,10],1,1))*10;
+SOC_init1 = 65;
+SOC_init2 = 32;
+flip_cnt = 10;
+brk_cnt = 30;
+ 
+Vdc1 = zeros(1, brk_cnt-flip_cnt);
+SOC1 = zeros(1,brk_cnt-flip_cnt);
+Vload_NC1 = zeros(1,brk_cnt-flip_cnt);
+Vdc2 = zeros(1, brk_cnt-flip_cnt);
+SOC2 = zeros(1,brk_cnt-flip_cnt);
+Vload_NC2 = zeros(1,brk_cnt-flip_cnt);
+flag_MPEI1 = 0;
+flag_MPEI2 = 0;
+ 
+ if exist('C:\Users\lxm125130\Documents\Lizon\Xbee config\Q.mat') == 0
+    Q = containers.Map('KeyType','int32','ValueType','any');
+ else
+    Q = load('Q.mat');
+    Q = Q.Q;
+ end
+ 
+s1 = serial('COM13');
+s2 = serial('COM8');
+set(s1,'Terminator','LF/CR');
+set(s2,'Terminator','LF/CR');
+fopen(s1);
+fopen(s2);
+go = 1
+start1 = fscanf(s1)
+start2 = fscanf(s2)
+    
+% if isempty(start1)
+%     start = fscanf(s2)
+% elseif (start ~= 'start  ')
+%     start = fscanf(s2)
+% else
+   % fwrite(s2,mode);
+   for(k=1:1:iter_num)
+       k;
+       i = 1;
+       i_ml = 1;
+       it = 0;
+%        it = [0 0 0];
+       fault_cnt(k) = 0;
+       mode_test(k) = 0;
+       
+       ask = 'ID';
+       fwrite(s2,ask);
+       ID2 = fscanf(s2)
+       pause(1);
+%     
+       mode = 3;
+       Batt_NC_command = 18;
+       msg = mode*100+Batt_NC_command ;
+%        ask = 'md';
+%        fwrite(s1, ask);
+%        fwrite(s2, ask);
+%        fwrite(s1, msg);
+%        fwrite(s2, msg);
+%        msg_rx1 = fread(s1,1)
+%        msg_rx2 = fread(s2,1)
+%        while(msg_rx1~=msg)
+%        fwrite(s1, ask);
+%        fwrite(s1, msg);
+%        msg_rx1 = fread(s1,1)
+%        end
+%        while(msg_rx2~=msg)
+%        fwrite(s2, ask);
+%        fwrite(s2, msg);
+%        msg_rx2 = fread(s2,1)
+%        end
+       
+         ask = 'md';
+         fwrite(s1, ask);
+         fwrite(s2, ask);
+         fwrite(s1, mode);
+         fwrite(s2, mode);
+         md_rx1 = fread(s1,1)
+         md_rx2 = fread(s2,1)
+         %                msg = 22;
+         while(md_rx1~=mode)
+             fwrite(s1, ask);
+             fwrite(s1, mode);
+             md_rx1 = fread(s1,1)
+         end
+         while(md_rx2~=mode)
+             fwrite(s2, ask);
+             fwrite(s2, mode);
+             md_rx2 = fread(s2,1)
+         end
+               
+         ask = 'bc';
+         fwrite(s1, ask);
+         fwrite(s2, ask);
+         fwrite(s1, Batt_NC_command);
+         fwrite(s2, Batt_NC_command);
+         bc_rx1 = fread(s1,1)
+         bc_rx2 = fread(s2,1)
+         %                msg = 22;
+         while(bc_rx1~=Batt_NC_command)
+             fwrite(s1, ask);
+             fwrite(s1, Batt_NC_command);
+             msg_rx1 = fread(s1,1)
+         end
+         while(bc_rx2~=Batt_NC_command)
+             fwrite(s2, ask);
+             fwrite(s2, Batt_NC_command);
+             msg_rx2 = fread(s2,1)
+         end
+      
+       ask = 'it';
+       fwrite(s1, ask);
+       fwrite(s2, ask);
+       fwrite(s1, it);
+       fwrite(s2, it);
+       it1 = fread(s1,1)
+       it2 = fread(s2,1)
+       while (it1~=it)
+       fwrite(s1, ask);
+       fwrite(s1, it);
+       it1 = fread(s1,1)
+       end
+       while (it2~=it)
+       fwrite(s2, ask);
+       fwrite(s2, it);
+       it2 = fread(s2,1)
+       end
+%        pause(1);
+%        
+       while(1)
+%                      
+           if (i == flip_cnt)
+               tic;
+               it = 1;
+               ask = 'it';
+               fwrite(s1, ask);
+               fwrite(s2, ask);
+               fwrite(s1, it);
+               fwrite(s2, it);
+               it1 = fread(s1,1)
+               it2 = fread(s2,1)
+               while (it1~=it)
+                   fwrite(s1, ask);
+                   fwrite(s1, it);
+                   it1 = fread(s1,1)
+               end
+               while (it2~=it)
+                   fwrite(s2, ask);
+                   fwrite(s2, it);
+                   it2 = fread(s2,1)
+               end
+ 
+%                                    
+               mode = randi([1,4],1,1);
+%                mode = 3;
+               mode_test(k) = mode;
+               %insert action - act and getactionfrommaxQ
+               %write the max Q action to SCI and send
+               Action = GetActionFromMaxQ_2units(Q,mode,epsilon);
+               Action_test(k) = Action;
+               Batt_NC_command = Action;
+%                Batt_NC_command = 7;
+%                msg = mode*100+Batt_NC_command 
+%                msg = 256;
+               ask = 'md';
+               fwrite(s1, ask);
+               fwrite(s2, ask);
+               fwrite(s1, mode);
+               fwrite(s2, mode);
+               md_rx1 = fread(s1,1)
+               md_rx2 = fread(s2,1)
+%                msg = 22;
+               while(md_rx1~=mode)
+                   fwrite(s1, ask);
+                   fwrite(s1, mode);
+                   md_rx1 = fread(s1,1)
+               end
+               while(md_rx2~=mode)
+                   fwrite(s2, ask);
+                   fwrite(s2, mode);
+                   md_rx2 = fread(s2,1)
+               end
+               
+                ask = 'bc';
+               fwrite(s1, ask);
+               fwrite(s2, ask);
+               fwrite(s1, Batt_NC_command);
+               fwrite(s2, Batt_NC_command);
+               bc_rx1 = fread(s1,1)
+               bc_rx2 = fread(s2,1)
+%                msg = 22;
+               while(bc_rx1~=Batt_NC_command)
+                   fwrite(s1, ask);
+                   fwrite(s1, Batt_NC_command);
+                   bc_rx1 = fread(s1,1)
+               end
+               while(bc_rx2~=Batt_NC_command)
+                   fwrite(s2, ask);
+                   fwrite(s2, Batt_NC_command);
+                   bc_rx2 = fread(s2,1)
+               end
+%                               
+           end
+           if (i >= flip_cnt)
+               ask = 'PR'
+               fwrite(s1, ask);
+               fwrite(s2, ask);
+               V1 = fread(s1,3);
+               V2 = fread(s2,3);
+               %pause(1);
+               if ((~isempty(V1))&&(length(V1) == 3)&&(~isempty(V2))&&(length(V2) == 3))
+                   Vdc1(i_ml) = V1(1)
+                   SOC1(i_ml) = V1(2);
+                   Vload_NC1(i_ml) = V1(3);
+                   
+                   Vdc2(i_ml) = V2(1)
+                   SOC2(i_ml) = V2(2)
+                   Vload_NC2(i_ml) = V2(3)
+               else
+                   fault_cnt(k) = fault_cnt(k)+1;
+                   if i_ml == 1
+                       Vdc1(i_ml) = 0;
+                       SOC1(i_ml) = 0;
+                       Vload_NC1(i_ml) = 0;
+                       
+                       Vdc2(i_ml) = 0;
+                       SOC2(i_ml) = 0;
+                       Vload_NC2(i_ml) = 0;
+                   else
+                       Vdc1(i_ml) = Vdc1(i_ml-1);
+                       SOC1(i_ml) = SOC1(i_ml-1);
+                       Vload_NC1(i_ml) = Vload_NC1(i_ml-1);
+                       
+                       Vdc2(i_ml) = Vdc2(i_ml-1);
+                       SOC2(i_ml) = SOC2(i_ml-1);
+                       Vload_NC2(i_ml) = Vload_NC2(i_ml-1);
+                   end
+               end
+               i_ml = i_ml+1;
+           end
+%            
+%            if (i == flip_cnt+1)
+%                tic;
+%                            
+%                while(md ~= mode)
+%                    ask = 'md';
+%                    fwrite(s2, ask);
+%                    fwrite(s2, mode);
+%                    md = fread(s2,1)
+% %                    pause(1);
+%                end
+%                while (bc ~= Batt_NC_command)
+%                    ask = 'bc';
+%                    fwrite(s2, ask);
+%                    fwrite(s2, Batt_NC_command);
+%                    bc = fread(s2,1)
+% %                    pause(1);
+%                end
+%                
+%                               
+%            end
+%            
+           i = i+1
+           if(i==brk_cnt)
+               time = toc;
+               k;
+               break;
+           end
+%            
+           pause(1);
+       end
+    if(~isempty(md_rx1)&&~isempty(md_rx2)&&~isempty(bc_rx1)&&~isempty(bc_rx2))
+    if ((md_rx1 == mode) && (md_rx2 == mode)&& (bc_rx1 == Batt_NC_command)&& (bc_rx2 == Batt_NC_command))
+       Vdc_ML1 = Vdc1(10:end)
+       Vdc_min1 = min(Vdc_ML1);
+       Vdc_avg1 = sum(Vdc_ML1)/(length(Vdc_ML1));
+       Vdc_ML2 = Vdc2(10:end)
+       Vdc_min2 = min(Vdc_ML2);
+       Vdc_avg2 = sum(Vdc_ML2)/(length(Vdc_ML2));
+              
+       Vload_ML1 = Vload_NC1(10:end)
+       Vload_min1 = min(Vload_ML1);
+       Vload_ML2 = Vload_NC2(10:end)
+       Vload_min2 = min(Vload_ML2);
+       
+       %SOC calculation
+       SOC_ML1 = SOC1(10:end)
+       SOC_final1 = SOC_init1+(SOC1(length(SOC1))-SOC1(1));
+       SOC_ML2 = SOC2(10:end)
+       SOC_final2 = SOC_init2+(SOC2(length(SOC2))-SOC2(1));
+       
+%        if (Vdc_min1>=75 && SOC_final1>20 && SOC_final1<100 && Vload_min1 > 0)
+%            flag_MPEI1 = 1;
+%        else
+%            flag_MPEI1 = 0;
+%        end
+%        if (Vdc_min1>=75 && SOC_final1>20 && SOC_final1<100 && Vload_min1 > 0)
+%            flag_MPEI2 = 1;
+%        else
+%            flag_MPEI2 = 0;
+%        end
+%        if (flag_MPEI1 == 0 && flag_MPEI2 == 0)
+           reward = rewardcalc_2units(Vdc_min1,SOC_final1,Vload_min1,Vdc_min2,SOC_final2,Vload_min2)
+           
+           Qvals = Q(mode);
+           currentQ = Qvals(Action);
+           newQ = ((1 - alpha) * currentQ) + (alpha * reward);
+           Qvals(Action) = newQ;
+           Q(mode) = Qvals;
+           save('Q.mat','Q');
+           
+%            epsilon = power(alpha,k);
+           
+           reward_log(k+1) = reward;
+           fileID = fopen('Log.csv','a');
+           fprintf(fileID,'%d, %5.2f, %5.2f, %5.2f, %5.2f, %5.2f, %5.2f, %5.2f, %5.2f, %5.2f\n',k,Action,mode,Vdc_min1,Vdc_min2,Vload_min1,Vload_min2,SOC_final1,SOC_final2,reward);
+           fclose(fileID);
+%        end       
+    end
+%     Vdc = zeros(1, brk_cnt-1);
+%     SOC = zeros(1,brk_cnt-1);
+%     Vload_NC = zeros(1,brk_cnt-1);
+ 
+    end
+   k
+   Vdc1 = zeros(1, brk_cnt-flip_cnt);
+   SOC1 = zeros(1,brk_cnt-flip_cnt);
+   Vload_NC1 = zeros(1,brk_cnt-flip_cnt);
+   
+   Vdc2 = zeros(1, brk_cnt-flip_cnt);
+   SOC2 = zeros(1,brk_cnt-flip_cnt);
+   Vload_NC2 = zeros(1,brk_cnt-flip_cnt);
+end
+%close all instances of serial port being open
+fclose(s2);
+if ~isempty(instrfind)
+   fclose(instrfind);
+   delete(instrfind);
+end
+ 
+
+
+
+function act = GetActionFromMaxQ_2units(Q,state,epsilon)
+    %ACTS: 
+    if isKey(Q,state) ~= 1
+        Q(state) = zeros(1,18);
+    end
+    
+%     random_num = rand(1);
+%     %epsilon = 0.2;
+%     if random_num <= epsilon
+%         act = randi([1,18],1,1);
+%     else
+        qvals = Q(state);
+        [~,arg] = max(qvals);
+        act = arg;
+%     end
+        
+end
+
+
+
+function R = rewardcalc_2units(dc_voltage1,self_soc1,NC_Vload1,dc_voltage2,self_soc2,NC_Vload2)
+    self_soc1 = self_soc1 / 100;
+    self_soc2 = self_soc2 / 100;
+    % initialize random reward
+    R1 = (rand(1)-0.5)*0.5;
+    R2 = (rand(1)-0.5)*0.5;
+    dc_voltage = (dc_voltage1+dc_voltage2)/2;
+    if dc_voltage < 148
+        R1 = R1 - 100;
+    end
+    if NC_Vload1 < 20 
+        R1 = R1 - 30;
+    end
+    R1 = R1 + ((self_soc1-0.6)*(self_soc1-1)*(-500)-20);
+    
+    if dc_voltage < 148
+        R2 = R2 - 100;
+    end
+    if NC_Vload2 < 20 
+        R2 = R2 - 30;
+    end
+    R2 = R2 + ((self_soc2-0.6)*(self_soc2-1)*(-500)-20);
+    
+    R = (R1+R2)/2;
+    
+end
+
