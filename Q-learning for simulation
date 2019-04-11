@@ -104,4 +104,141 @@ for i = 1:15:iter_num
    save('Q.mat','Q')
     
 end
+
+
+
+
+
+function [self_init_soc,neigh_init_soc,grid_signal,solar] = getParams_SOC(sev_weather,peak_time,grid_okay,self_bat,n_bat)
+    % self battery initial SoC
+    if self_bat == 1
+        self_init_soc = 100*(0.8 + rand(1)*0.2);
+    else
+        self_init_soc = 100*(rand(1)*0.3 + 0.5);
+    end
+    
+    % neighbor battery initial SoC
+    if n_bat == 1
+        neigh_init_soc = 100*(0.8 + rand(1)*0.2);
+    else
+        neigh_init_soc = 100*(0.5 + rand(1)*0.3);
+    end
+    
+    % solar power output
+    if sev_weather ==1
+        solar = 0; %no solar output
+    else
+        solar = 1;
+    end
+    
+    % grid signal code
+    if grid_okay == 1
+        grid_signal = 0; %normal signal
+    else
+        if sev_weather == 1
+            grid_signal = 1; % severe weather outage
+        else
+            if peak_time == 1
+                grid_signal = 2; % peak disruption
+            else
+                grid_signal = 1; % outage (treat same)
+            end
+        end
+    end 
+end
+
+
+
+
+
+
+function [Q_state, Action,isk_val] = act(Q,state,epsilon)
+isk_val = isKey(Q,state);
+%create Q-table entry for state, it new
+if isKey(Q,state) ~= 1
+        Q(state) = zeros(1,24);
+end
+ %Q(state)
+ Q_state = Q(state);
+ Action_1 = GetActionFromMaxQ(Q,state);
+ random_num = rand(1);
+ if (random_num <= epsilon)
+      Action_1 = randi([1,24],1,1);
+      LED = 1
+      epsilon;
+ end
+ Action = Action_1;
+    
+end
+
+
+
+
+
+function [grid,der,batt,nc] = interpretAction(act)
+    act = act-1;
+    nc = mod(act,2); %nc = 1 means non critical load on
+    
+    if mod(act,4) > 1
+        batt = 1; %Charge battery
+    else
+        batt = 0; %Discharge
+    end
+    
+    if mod(act,8) > 3
+        der = 1; %DER on
+    else
+        der = 0; %DER off
+    end
+    
+%     if act > 16
+%         grid = 2; % off
+%     elseif act > 8
+%         grid = 1; % provide
+%     else
+%         grid = 0; % consume
+%     end   
+   if act > 15
+        grid = 2; % off
+    elseif act > 7
+        grid = 1; % provide
+    else
+        grid = 0; % consume
+    end  
+end
+
+
+
+
+
+function R = reward_SOC(sev_weather,dc_voltage,self_soc)
+    self_soc = self_soc/100;
+    % initialize random reward
+    R = (rand(1)-0.5)*0.5;
+    
+    if dc_voltage < 173
+        R = R - 40;
+    end
+    
+    if sev_weather
+        R = R + self_soc;
+    else
+        if self_soc >= 0.5
+        R = R + ((self_soc-0.6)*(self_soc-1))*(-300)-13;
+        end
+        if self_soc < 0.5
+        R = R - 28;
+        end
+    end
+end
+
+
+
+
+
+
+
+
+
+
    
