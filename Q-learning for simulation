@@ -1,0 +1,107 @@
+% Author - Lizon Maharjan
+% Code is in Matlab script 
+% uses parfor to parallel 15 cores
+% The simulink model file that it requires is "Complete_system_train_Mark_2016b_corrected_SOC.slx"
+% 
+%clc;clear;
+epsilon = 1.0;
+Q = containers.Map('KeyType','int32','ValueType','any');
+% Q = load('Q.mat');
+% Q = Q.Q;
+state = zeros(1,15,'int32');
+r = zeros(1,15);
+tol = 0.01;
+iter_num = (15*170);
+alpha = exp(log(tol)/iter_num);
+%reward = [40,0,0,40];
+l = zeros(15,24);
+LED = 0;
+
+%c =zeros(1500,1);
+% fileID = fopen('Log.csv','w');
+% fprintf(fileID,'%s, %s, %s\n','Mode','Action','Reward');
+% fclose(fileID);
+
+
+for i = 1:15:iter_num
+    i
+    %load_system('Complete_system_train_Mark_2016b_pf.slx');
+    cnt = 0;
+    tic;
+    if (cnt == 0) 
+        %c = 0;
+        parfor k = 1:15
+%       load('Q.mat');
+        load_system('Complete_system_train_Mark_2016b_corrected_SOC.slx');
+        epsilon = power(alpha,(i+(k-1)))
+        st = randi([0,1],1,5);
+        state(k) = st(1)*1e4 + st(2)*1e3 + st(3)*1e2 + st(4)*10 + st(5);
+        [self_init_soc_1(k),neigh_init_soc_1(k),grid_signal_1(k),solar_1(k)] = getParams_SOC(st(1),st(2),st(3),st(4),st(5));
+        
+        %mode(k) = mode_detect(st(1),st(2),st(3),st(4),st(5));
+        [Q_state, Action(k), isk_val] = act(Q,state(k),epsilon);
+        
+        [grid_command_1(k),der_command_1(k),batt_command_1(k),nc_command_1(k)] = interpretAction(Action(k));
+        
+        %setting paramerters for simulation
+        set_param('Complete_system_train_Mark_2016b_corrected_SOC/Batt Command','Value', num2str(batt_command_1(k)));
+        set_param('Complete_system_train_Mark_2016b_corrected_SOC/Grid Command','Value', num2str(grid_command_1(k)));
+        set_param('Complete_system_train_Mark_2016b_corrected_SOC/DER Command','Value', num2str(der_command_1(k)));
+        set_param('Complete_system_train_Mark_2016b_corrected_SOC/NC Command','Value', num2str(nc_command_1(k)));
+        set_param('Complete_system_train_Mark_2016b_corrected_SOC/Battery1','SOC', num2str(self_init_soc_1(k)));
+        set_param('Complete_system_train_Mark_2016b_corrected_SOC/Grid Code','Value', num2str(grid_signal_1(k)));
+        set_param('Complete_system_train_Mark_2016b_corrected_SOC/Solar Power','Value', num2str(solar_1(k)));
+        
+        %Runing simulation and getinng Vdc and bat info
+        [vdc(k),bat(k)] = simulate_sim('Complete_system_train_Mark_2016b_corrected_SOC.slx');
+        
+        % calculating final SOC and minimum DC voltage from the Vdc and bat info
+        final_soc(k) = bat(k).Data(end);
+        min_avg_dc_volt(k) = min(movmean(vdc(k).Data(round(length(vdc(k).Data)/2):end),100));
+        
+        % generate reward based on results
+        r(k) = reward_SOC(st(1),min_avg_dc_volt(k),final_soc(k));
+    
+%       isk_val = isKey(Q,state(k))
+%       if isk_val ~= 1
+%         Q_state = zeros(1,7);
+%        end
+%       [Q_state, Action(k)] = act_l(Q,state(k),epsilon);
+      
+      %   r(k) = reward_test(Action(k),mode(k));
+         %l(k,:)=Q_state
+         Qvals = Q_state;
+         currentQ = Qvals(Action(k));
+         newQ = ((1 - alpha) * currentQ) + (alpha * r(k));
+         Qvals(Action(k)) = newQ;
+         Q_state = Qvals
+         l(k,:)=Q_state
+         %epsilon = power(alpha,k)
+         end
+         cnt = 1;
+%          fileID = fopen('Log_2.csv','a');
+%          fprintf(fileID,'%d, %5.2f, %5.2f,%5.2f,%5.2f,%5.2f,%5.2f,%5.2f\n',state, l(:,1),l(:,2),l(:,3),l(:,4),l(:,5),l(:,6),l(:,7));
+%          fclose(fileID);
+    end
+    if (cnt == 1)
+        for k = 1:length(state)
+        Q(state(k)) = l(k,:);
+        end
+        %Q
+        save('Q.mat','Q')
+        cnt = 0;
+    end
+    if (i<15)
+        result = [min_avg_dc_volt' final_soc' r'];
+    else
+        result = [result ; min_avg_dc_volt' final_soc' r'];
+    end
+    toc;
+   csvwrite('Log.csv',result);
+   fileID = fopen('Log.csv','a');
+   fprintf(fileID,'%s, %s, %s\n','Min_avg_dc_volt','Final_soc','Reward');
+   fclose(fileID);
+   save('Q.mat','Q')
+    
+end
+   
