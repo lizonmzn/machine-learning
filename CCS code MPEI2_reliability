@@ -1,0 +1,1462 @@
+/*
+ * Init.c
+ *
+ *  	Created on: 8/19/2016
+ *      Author: Carlos Caicedo
+ *      Attempt to clean up and service previous code.
+ */
+//###########################################################################
+
+// This code includes PFC and battery charging with 300 ohms DC load.
+// Runs PFC, then switches between battery charge and discharge depending on the DC bus voltage
+// It switches the battery side converter off, and turns it on again depending on a counter
+//
+//###########################################################################
+//
+// Original Author: Lizon :OP
+//
+// $TI Release: 2833x/2823x Header Files and Peripheral Examples V133 $
+// $Release Date: June 8, 2012 $
+//###########################################################################
+
+#include "DSP28x_Project.h"     // Device Headerfile and Examples Include File
+#include "DSP2833x_Examples.h"
+#include "Phase&Position_Struc.h"
+#include "math.h"
+#include "stdlib.h"
+#include "stdio.h"
+
+interrupt void MainISR(void);
+void offset_ADC();
+void AC_DC_pfc();
+void DC_AC_VFD();
+void current_filter();
+void Data_Init();
+void Output_Fre();
+void Batt_boost();
+void Batt_charge();
+void Batt();
+void Solar();
+void current_protection();
+void Initialization_Gpio();
+void relay_test();
+
+// Defining interrupts and functions related to SCI (Serial) Communication
+void scib_echoback_init(void);
+void scib_fifo_init(void);
+void scib_xmit(int a);
+void scib_msg(char *msg);
+extern void InitSciGp();
+extern void strcpy();
+
+Uint16 LoopCount;
+Uint16 ErrorCount;
+//Uint16 test1;
+Uint16 trans_cnt = 0;
+Uint16 ReceivedChar;
+Uint32 ReceivedChar1;
+Uint16 testc;
+Uint16 cnv_cnt=0;
+int i = 0;
+int j = 6;
+Uint16 c[6];
+Uint16 mode = 3;
+Uint16 Batt_command = 6;
+Uint16 Batt_command_ref = 4;
+Uint16 NC_load_command = 0;
+Uint16 Solar_command = 0;
+Uint16 iter = 0;
+char msg_Vg[3];
+char msg_Vdc[3];
+//char msg_Vbatt[3];
+char msg_Vbatt[6];
+char msg2[2];
+char V_concat[6];
+char msg3;
+int msg_out;
+char *test_msg;
+int Vg_int;
+int Vg_int_tens;
+int Vg_test;
+int Vbatt_int;
+int Vbatt_int_tens;
+int Vc_int;
+int Vc_int_tens;
+int Vbatt_int_hun;
+int Ibatt_buck_int;
+int Ibatt_boost_int;
+int Vload_NC_int;
+int Iload_NC_int;
+int32 k=0;
+
+Uint16 offset_Vgrid[5] = {0,0,0,0,0};
+Uint16 offset_Iin[5] = {0,0,0,0,0};
+Uint16 offset_Vout[5] = {0,0,0,0,0};
+Uint16 offset_Ibtry[5] = {0,0,0,0,0};
+Uint16 offset_Vbtry[5] = {0,0,0,0,0};
+Uint16 offset_Vsolr[5] = {0,0,0,0,0};
+Uint16 offset_Isolr[5] = {0,0,0,0,0};
+Uint16 offset_Vload[5] = {0,0,0,0,0};
+Uint16 offset_Iload[5] = {0,0,0,0,0};
+//Uint16 offset_Ic[5] = {0,0,0,0,0};
+//Uint16 offset_Ib[5] = {0,0,0,0,0};
+//Uint16 offset_Ia[5] = {0,0,0,0,0};
+Uint16 flag_offset = 1;
+Uint16 batt_flag = 0;
+Uint16 rect_ind_flag = 0;
+Uint16 flag_overcurrent = 0;
+Uint16 flag_battcharge = 0;
+Uint16 flag_battboost = 0;
+Uint16 solar_flag = 0;
+Uint16 SOC_low_flag = 0;
+Uint16 SOC_init_flag = 1;
+Uint16 sin_dir = 0;
+Uint32 counter=0;
+Uint32 offset_cnt=0;
+Uint32 Vdc_cnt=0;
+float32 cnt = 0;
+float32 rms_cnt = 0;
+Uint32 cnt_batt = 0;
+Uint32 test_cnt = 0;
+Uint16 slice=0;
+Uint32 period = 3000;
+Uint32 duty = 1500;
+Uint32 Inv_on_cnt = 0;
+float32 ki_Isolar = 1;
+float32 kp_Isolar = 20;
+float32 ki_Vsolar = 50;
+float32 kp_Vsolar = 0.023;
+float32 ref_Isolar = 1.5;
+Uint32 SOC_init = 65;
+float32 SOC_final = 65;
+Uint32 SOC_cnt = 0;
+Uint32 SOC_final_int = 65;
+float32 Vc_solar = 0;
+
+volatile float GAIN_Vgrid=1;
+volatile float GAIN_Iin=1;
+volatile float GAIN_Vout=1;
+volatile float GAIN_Ibtry=1;
+volatile float GAIN_Vbtry=1;
+volatile float GAIN_Vsolr=1;
+volatile float GAIN_Isolr=1;
+volatile float GAIN_Vload=1;
+volatile float GAIN_Iload=1;
+volatile float GAIN_Ic=1;
+volatile float GAIN_Ib=1;
+volatile float GAIN_Ia=1;
+
+float32 Vref = 15;
+float32 Vg;
+float32 Vg_square;
+float32 Vg_rms;
+float32 Vc;
+float32 Vbatt;
+float32 Vc_cnt=0;
+float32 Vc_avg;
+float32 Vbatt_cnt=0;
+float32 boost_cnt=0;
+float32 solar_cnt=0;
+float32 Vbatt_avg;
+float32 Vsolar;
+float32 Vsolar_cnt=0;
+float32 Vsolar_avg;
+float32 Vload_NC;
+float32 Vload_NC_cnt=0;
+float32 Vload_NC_avg;
+float32 Iload_PI;
+float32 Vload_PI;
+float32 Iload_ref = 1;
+float32 Vload_ref = 24;
+float32 ki_Vload = 0.0001;
+float32 kp_Vload = 0.04;
+float32 ki_Iload = 1;
+float32 kp_Iload = 20;
+float32 Il;
+float32 Il_pk = 1;
+float32 Ik;
+float32 Ibatt;
+float32 Ibatt_cnt = 0;
+float32 Ibatt_avg;
+float32 Isolar;
+float32 Iload_NC;
+float32 Iload_NC_cnt = 0;
+float32 Iload_NC_avg;
+float32 ref_Vcavg=70;
+//float32 m = 0.0514; //Vbatt = 114.749-(0.05116*Vbtry.measured)
+//float32 c = 95;
+float32 theta;
+float32 relay_cnt = 0;
+
+//Definitions for PI calculations
+float32 Vout_ref;
+float32 Vout_sum;
+float32 Vout_PI;
+float32 Vcbattout_PI;
+float32 Vcsolarout_PI;
+float32 Ibatt_PI;
+float32 Isolar_PI;
+Uint16 ref_Isolar_PI = 1050;
+float32 Vbattout_PI;
+//float32 Ibatt_ref;
+float32 Il_ref;
+float32 Il_sum;
+float32 Il_PI;
+float32 PICAL(PIST* st, float32 new);
+
+PIST DeltaVc_pi;
+PIST DeltaIl_pi;
+PIST DeltaVcbatt_pi;
+PIST DeltaIbatt_pi;
+PIST DeltaVbatt_pi;
+PIST DeltaVcsolar_pi;
+PIST DeltaIsolar_pi;
+PIST DeltaIload_pi;
+PIST DeltaVload_pi;
+
+//Definitions for VFD
+
+#define PWM_INV_TIMER_TBPRD   0x17FF
+#define pi 3.141593
+
+/*To reduce time*/
+int Duty_PFC,Duty_Inv1,Duty_Inv2,Duty_Inv6;
+
+/*To change ratio*/
+float Mstart, Slope;
+//double KR;//The votlage ratio between the main winding and the auxiliary winding
+float Y1_m, Y2_m;
+double xsin,xcos;
+
+double om,thet,thet5,Duty_inv5,Mamp_inv5;
+float fac = 5;
+double Fre_ref_total;
+int Numperiod,F_ref,Fre_ref;
+
+Uint16 Voutside; //potentiometer for fre_ref
+Uint16 V_fre;
+Uint16 Mode_flag = 0;
+Uint16 Inv_flag = 0;
+Uint16 PFC_flag = 0;
+Uint16 soft_start_flag = 0;
+Uint32  EPwm5TimerIntCount;
+
+main()
+ {
+
+   InitSysCtrl();
+
+
+   EALLOW;
+   #if (CPU_FRQ_150MHZ)     // Default - 150 MHz SYSCLKOUT
+     #define ADC_MODCLK 0x3 // HSPCLK = SYSCLKOUT/2*ADC_MODCLK2 = 150/(2*3)   = 25.0 MHz
+
+   #endif
+   #if (CPU_FRQ_100MHZ)
+     #define ADC_MODCLK 0x2 // HSPCLK = SYSCLKOUT/2*ADC_MODCLK2 = 100/(2*2)   = 25.0 MHz
+   #endif
+   EDIS;
+
+   // Assuming InitSysCtrl() has set SYSCLKOUT to 150 MHz
+   EALLOW;
+   SysCtrlRegs.HISPCP.all = 0;
+   EDIS;
+
+    MemCopy(&RamfuncsLoadStart, &RamfuncsLoadEnd, &RamfuncsRunStart);
+	InitFlash();
+
+   DINT;
+
+     InitPieCtrl();
+
+     IER = 0x0000;
+     IFR = 0x0000;
+
+     InitPieVectTable();
+
+     Data_Init();
+
+      //InitAdc();  // init the ADC
+  	EALLOW;
+  	SysCtrlRegs.PCLKCR0.bit.ADCENCLK = 1;
+  	ADC_cal();
+
+  	EDIS;
+
+
+  // Enable ADCINT in PIE
+  // Enable PIE group 1 interrupt 6 for ADCINT
+     PieCtrlRegs.PIEIER1.bit.INTx6 = 1;
+  // Enable PIE group 3 interrupt 1,2 for EPWM1_INT and EPWM2_INT
+     PieCtrlRegs.PIEIER3.bit.INTx1 = 1;
+     PieCtrlRegs.PIEIER3.bit.INTx2 = 1;
+     PieCtrlRegs.PIEACK.all |= PIEACK_GROUP9;
+     IER |= M_INT3; // Enable CPU INT3 for EPWM1_INT
+     IER |= M_INT9; // Enable CPU INT
+     IER |= M_INT1; // Enable CPU Interrupt 1
+     EINT;          // Enable Global interrupt INTM
+     ERTM;          // Enable Global realtime interrupt DBGM
+
+   // Configure GPIO, EPWM, EPWM interrupt
+     Initialization_Gpio(); //contains code to initialize GPIO, Epwm and Interupt from Epwm
+      //  Trip Zone Code
+      //  EPwm1Regs.TZCTL.bit.TZA = 3;        // Trip EPWM1A to go low
+     InitSciGp(); // This function initializes GPIO14 and 15 for SCIB, and is found in the DSP2833x_Sci.c file.
+
+      EALLOW;
+      SysCtrlRegs.PCLKCR0.bit.TBCLKSYNC = 1;         // Start all the timers synced
+      EDIS;
+
+      EALLOW;	// This is needed to write to EALLOW protected registers
+
+      PieVectTable.EPWM1_INT = &MainISR;
+
+      EDIS;
+
+   // Configure ADC
+     EALLOW;
+     AdcRegs.ADCTRL3.all = 0x00E0;  /* Power up bandgap/reference/ADC circuits*/
+
+     AdcRegs.ADCTRL3.bit.SMODE_SEL = 1;
+     AdcRegs.ADCTRL1.bit.SEQ_CASC = 1; // Setup cascaded sequencer mode
+     AdcRegs.ADCTRL1.bit.ACQ_PS=3;
+
+     AdcRegs.ADCMAXCONV.all = 0x0007;       // Setup 2 conv's on SEQ1
+     AdcRegs.ADCCHSELSEQ1.bit.CONV00 = 0x0; // Setup conv from ADCINA0 & ADCINB0
+     AdcRegs.ADCCHSELSEQ1.bit.CONV01 = 0x1; // Setup conv from ADCINA1 & ADCINB1
+     AdcRegs.ADCCHSELSEQ1.bit.CONV02 = 0x2; // Setup conv from ADCINA2 & ADCINB2
+     AdcRegs.ADCCHSELSEQ1.bit.CONV03 = 0x3; // Setup conv from ADCINA3 & ADCINB3
+     AdcRegs.ADCCHSELSEQ2.bit.CONV04 = 0x4; // Setup conv from ADCINA4 & ADCINB4
+     AdcRegs.ADCCHSELSEQ2.bit.CONV05 = 0x5; // Setup conv from ADCINA5 & ADCINB5
+     AdcRegs.ADCCHSELSEQ2.bit.CONV06 = 0x6; // Setup conv from ADCINA6 & ADCINB6
+     AdcRegs.ADCCHSELSEQ2.bit.CONV07 = 0x7; // Setup conv from ADCINA7 & ADCINB7
+
+     AdcRegs.ADCTRL2.bit.EPWM_SOCA_SEQ1 = 1;// Enable SOCA from ePWM to start SEQ1
+     AdcRegs.ADCTRL2.bit.INT_ENA_SEQ1 = 1;  // Enable SEQ1 interrupt (every EOS)
+     AdcRegs.ADCTRL1.bit.CPS = 0x1;
+     AdcRegs.ADCTRL3.bit.ADCCLKPS = 0x6;
+   /*
+   ADCINA0 -> ADCRESULT0
+   ADCINB0 -> ADCRESULT1
+   ADCINA1 -> ADCRESULT2
+   ADCINB1 -> ADCRESULT3
+   ADCINA2 -> ADCRESULT4
+   ADCINB2 -> ADCRESULT5
+   ADCINA3 -> ADCRESULT6
+   ADCINB3 -> ADCRESULT7
+   ADCINA4 -> ADCRESULT8
+   ADCINB4 -> ADCRESULT9
+   ADCINA5 -> ADCRESULT10
+   ADCINB5 -> ADCRESULT11
+   ADCINA6 -> ADCRESULT12
+   ADCINB6 -> ADCRESULT13
+   ADCINA7 -> ADCRESULT14
+   ADCINB7 -> ADCRESULT15
+   */
+
+
+   EPwm3Regs.CMPA.half.CMPA=0;
+   EPwm3Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+   EPwm4Regs.CMPA.half.CMPA=0;
+   EPwm4Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+   EPwm5Regs.CMPA.half.CMPA=0;//large means high gain of boost
+   EPwm5Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+   EPwm1Regs.CMPA.half.CMPA=0;
+   EPwm1Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+   EPwm2Regs.CMPA.half.CMPA=0;//large means high gain of boost
+   EPwm2Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+   EPwm6Regs.CMPA.half.CMPA=0;//large means high gain of boost
+   EPwm6Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+  EDIS;
+  // Initialize the SCI commands
+
+     LoopCount = 0;
+     ErrorCount = 0;
+
+     scib_fifo_init();       // Initialize the SCI FIFO
+     scib_echoback_init();  // Initialize SCI for echoback
+
+     scib_msg("start1\n\r"); // send start command so that the communication starts, this command is received by the other end
+  //   scib_xmit((int)(mode));
+
+// Wait for ADC interrupt
+   for(;;)
+   {
+// insert code to run SOC off of software when the Grid is not connected
+	   //AdcRegs.ADCTRL2.bit.SOC_SEQ1 = 1;
+       for (i = 0; i < 2; i++)
+       {
+           // Wait for inc character
+           while (ScibRegs.SCIFFRX.bit.RXFFST != 1) {} // wait for XRDY =1 for empty state
+           // Get character
+           ReceivedChar = ScibRegs.SCIRXBUF.all;
+           msg2[i] = ReceivedChar; //populate msg2[] with characters received
+       }
+
+       /* Detect the characters received and take corresponding action
+                  The limitation of communication is 3 digits - if the numbers are greater than 3 digits (i.e. 100s without decimals)....
+                  the code needs to be changed in zigbee/serial receiving matlab code.*/
+
+       if (msg2[0] == 'I' && msg2[1] == 'D') {
+           scib_msg("MPEI1");
+           scib_msg("\n\r");
+       }
+
+       else if (msg2[0] == 'P' && msg2[1] == 'R') {
+
+           scib_xmit(Vc_int);
+           scib_xmit(SOC_final_int);
+           scib_xmit(Vload_NC_int);
+       }
+       else if (msg2[0] == 'm' && msg2[1] == 'd') {
+           // Receive mode information
+           while (ScibRegs.SCIFFRX.bit.RXFFST != 1) {} // wait for XRDY =1 for empty state
+           // Get character
+           ReceivedChar1 = ScibRegs.SCIRXBUF.all;
+           msg3 = ReceivedChar1; //populate msg2[] with characters received
+           mode = (int)(msg3);
+//           mode = (int)(mode/100);
+//           Batt_command = (int)(msg3-mode*100);
+//           msg_out = (int)(mode*100+Batt_command);
+//
+           scib_xmit((int)(mode));
+
+
+           //----------- Mode Table ------------//
+           // Vg_rms = 1 (grid good, Vg_rms = 170V)
+           //        = 0 (grid bad, Vg_rms < 100V)
+           // Batt Conv = 1 (Charge/Buck)
+           //           = 2 (Discharge/Boost)
+           //           = 3 (Off)
+           //---------------------
+           //  Vg_rms|Conv|Mode
+           //---------------------
+           //    1   | 1  | 1
+           //    0   | 1  | 2
+           //    1   | 2  | 3
+           //    0   | 2  | 4
+           //    1   | 3  | 5
+           //    0   | 3  | 6
+           //-----------------------
+       }
+       else if (msg2[0] == 'b' && msg2[1] == 'c') {
+           while (ScibRegs.SCIFFRX.bit.RXFFST != 1) {} // wait for XRDY =1 for empty state
+           // Get character
+           ReceivedChar1 = ScibRegs.SCIRXBUF.all;
+           msg3 = ReceivedChar1; //populate msg2[] with characters received
+           Batt_command = (int)(msg3);
+
+           scib_xmit((int)(Batt_command));
+       }
+       //Get iteration (i) from matlab to start and stop the SOC count
+       else if (msg2[0] == 'i' && msg2[1] == 't'){
+           while (ScibRegs.SCIFFRX.bit.RXFFST != 1) {} // wait for XRDY =1 for empty state
+           // Get character
+           ReceivedChar1 = ScibRegs.SCIRXBUF.all;
+           msg3 = ReceivedChar1; //populate msg2[] with characters received
+           iter = (int)(msg3);
+
+           scib_xmit((int)(iter));
+       }
+       //      trans_cnt++;
+       //      LoopCount++;
+
+   }
+
+}
+
+
+
+
+interrupt void  MainISR(void)
+{
+	if (Mode_flag == 0)
+	{
+		counter++;
+	}
+
+    if (counter>5)
+    {
+        if (iter == 1)
+        {
+            if (mode<3)
+                SOC_init = 35;
+            else if (mode>=3 && mode<5)
+                SOC_init = 55;
+            else if (mode>=5 && mode<7)
+                SOC_init = 75;
+            else
+                SOC_init = 95;
+        }
+        if (iter == 0)
+            SOC_init = 65;
+
+
+    	slice++;
+    	offset_ADC();
+
+    	if (slice == 1)
+    	{
+        current_filter();
+    	}
+    	if (slice == 2)
+    	{
+    		current_filter();
+
+    		if (counter>80000)
+    		   { counter = 90000;
+    			if (flag_overcurrent == 0)
+    			{
+//    			        AC_DC_pfc();
+    		            Batt();
+    		            Solar();
+    		            DC_AC_VFD();
+//    		            relay_test();
+    			}
+    			else
+    			{   //turn everything off
+    			       EPwm3Regs.CMPA.half.CMPA=0;
+    				   EPwm3Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+    				   EPwm4Regs.CMPA.half.CMPA=0;
+    				   EPwm4Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+    				   EPwm5Regs.CMPA.half.CMPA=0;//large means high gain of boost
+    				   EPwm5Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+    				   EPwm1Regs.CMPA.half.CMPA=0;
+    				   EPwm1Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+    				   EPwm2Regs.CMPA.half.CMPA=0;//large means high gain of boost
+    				   EPwm2Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+    				   EPwm6Regs.CMPA.half.CMPA=0;//large means high gain of boost
+    				   EPwm6Regs.CMPB=PWM_INV_TIMER_TBPRD;
+    				   Mode_flag = 0;
+    			}
+    		   }
+    		slice = 0;
+    	}
+
+
+    }
+
+  // Reinitialize for next ADC sequence
+  EPwm1Regs.ETCLR.bit.INT = 1;// added to run main ISR more than once
+  AdcRegs.ADCTRL2.bit.RST_SEQ1 = 1;         // Reset SEQ1
+  AdcRegs.ADCST.bit.INT_SEQ1_CLR = 1;       // Clear INT SEQ1 bit
+  PieCtrlRegs.PIEACK.all = PIEACK_GROUP3;   // Acknowledge interrupt to PIE // CHANGED TO 3!!!!!!
+
+
+}
+
+
+
+void offset_ADC()
+{
+	if (flag_offset==1)
+	{
+       offset_cnt++;
+	   if (offset_cnt>0 && offset_cnt<5)
+	   {
+        offset_Vgrid[offset_cnt]=AdcRegs.ADCRESULT9 >>4;
+        offset_Iin[offset_cnt]=AdcRegs.ADCRESULT8 >>4;
+        offset_Vout[offset_cnt]=AdcRegs.ADCRESULT11 >>4;
+        offset_Ibtry[offset_cnt]=AdcRegs.ADCRESULT0 >>4;
+        offset_Vbtry[offset_cnt]=AdcRegs.ADCRESULT7 >>4;
+        offset_Vsolr[offset_cnt]=AdcRegs.ADCRESULT5 >>4;
+        offset_Isolr[offset_cnt]=AdcRegs.ADCRESULT2 >>4;
+        offset_Vload[offset_cnt]=AdcRegs.ADCRESULT1 >>4;
+        offset_Iload[offset_cnt]=AdcRegs.ADCRESULT14 >>4;
+	   }
+       if (offset_cnt==5)
+       {
+    	Vgrid.offset=((float)offset_Vgrid[1]+(float)offset_Vgrid[2]+(float)offset_Vgrid[3]+(float)offset_Vgrid[4])/4;
+    	Iin.offset=((float)offset_Iin[1]+(float)offset_Iin[2]+(float)offset_Iin[3]+(float)offset_Iin[4])/4;
+    	Vout.offset=((float)offset_Vout[1]+(float)offset_Vout[2]+(float)offset_Vout[3]+(float)offset_Vout[4])/4;
+    	Ibtry.offset=((float)offset_Ibtry[1]+(float)offset_Ibtry[2]+(float)offset_Ibtry[3]+(float)offset_Ibtry[4])/4;
+    	Vbtry.offset=((float)offset_Vbtry[1]+(float)offset_Vbtry[2]+(float)offset_Vbtry[3]+(float)offset_Vbtry[4])/4;
+    	Vsolr.offset=((float)offset_Vsolr[1]+(float)offset_Vsolr[2]+(float)offset_Vsolr[3]+(float)offset_Vsolr[4])/4;
+    	Isolr.offset=((float)offset_Isolr[1]+(float)offset_Isolr[2]+(float)offset_Isolr[3]+(float)offset_Isolr[4])/4;
+    	Vload.offset=((float)offset_Vload[1]+(float)offset_Vload[2]+(float)offset_Vload[3]+(float)offset_Vload[4])/4;
+    	Iload.offset=((float)offset_Iload[1]+(float)offset_Iload[2]+(float)offset_Iload[3]+(float)offset_Iload[4])/4;
+    	flag_offset=0;
+        }
+	}
+
+}
+
+void current_filter()
+{ //cnt++;
+	rms_cnt++;
+	if(slice==1)
+     {
+	   Vgrid.original1 = (AdcRegs.ADCRESULT9 >>4);
+	   Iin.original1 = (AdcRegs.ADCRESULT8 >>4);
+	   Vout.original1 = (AdcRegs.ADCRESULT11 >>4);
+	   Ibtry.original1 = (AdcRegs.ADCRESULT0 >>4);
+	   Vbtry.original1 = (AdcRegs.ADCRESULT7 >>4);
+	   Vsolr.original1 = (AdcRegs.ADCRESULT5 >>4);
+	   Isolr.original1 = (AdcRegs.ADCRESULT2 >>4);
+	   Vload.original1 = (AdcRegs.ADCRESULT1 >>4);
+	   Iload.original1 = (AdcRegs.ADCRESULT14 >>4);
+
+     }
+
+	 if (slice==2)
+	 { cnt++;
+		Vgrid.original2 = (AdcRegs.ADCRESULT9 >>4);
+	    Iin.original2 = (AdcRegs.ADCRESULT8 >>4);
+		Vout.original2 = (AdcRegs.ADCRESULT11 >>4);
+		Ibtry.original2 = (AdcRegs.ADCRESULT0 >>4);
+		Vbtry.original2 = (AdcRegs.ADCRESULT7 >>4);
+		Vsolr.original2 = (AdcRegs.ADCRESULT5 >>4);
+		Isolr.original2 = (AdcRegs.ADCRESULT2 >>4);
+		Vload.original2 = (AdcRegs.ADCRESULT1 >>4);
+		Iload.original2 = (AdcRegs.ADCRESULT14 >>4);
+
+       Vgrid.measured = ((float)Vgrid.original1+(float)Vgrid.original2)*GAIN_Vgrid/2;
+       Iin.measured = ((float)Iin.original1+(float)Iin.original2)*GAIN_Iin/2;
+       Vout.measured = ((float)Vout.original1+(float)Vout.original2)*GAIN_Vout/2;
+       Ibtry.measured = ((float)Ibtry.original1+(float)Ibtry.original2)*GAIN_Ibtry/2;
+       Vbtry.measured = ((float)Vbtry.original1+(float)Vbtry.original2)*GAIN_Vbtry/2;
+       Vsolr.measured = ((float)Vsolr.original1+(float)Vsolr.original2)*GAIN_Vsolr/2;
+       Isolr.measured = ((float)Isolr.original1+(float)Isolr.original2)*GAIN_Vsolr/2;
+       Vload.measured = ((float)Vload.original1+(float)Vload.original2)*GAIN_Vload/2;
+       Iload.measured = ((float)Iload.original1+(float)Iload.original2)*GAIN_Iload/2;
+
+
+       Vg = 209.614-(0.1024*Vgrid.measured);
+       Vbatt = 109-(0.05166*Vbtry.measured);
+       Vc = 443-(0.206*Vout.measured);
+       Vsolar = 105.232-(0.0514*Vsolr.measured);
+       Vload_NC = 110.232-(0.0514*Vload.measured);
+       //Vbatt = 114.749-(0.05116*Vbtry.measured)
+       Il = Iin.measured*(0.0125)-20.88;
+       Ibatt = Ibtry.measured*(0.0125)-20.88;
+       Isolar = Isolr.measured*(0.0125)-20.88;
+       Iload_NC = Iload.measured*(0.0125)-20.88;
+
+   	   //Defining Vc_avg and Vbatt_avg, which is the average of Vc and Vbatt over 100 counts
+
+   	   if (cnt == 0)
+   		{
+   			Vc_cnt = Vc;
+   			Vbatt_cnt = Vbatt;
+   		    Ibatt_cnt = Ibatt;
+   		    Vsolar_cnt = Vsolar;
+   		    Vload_NC_cnt = Vload_NC;
+   		    Iload_NC_cnt = Iload_NC;
+   		}
+   	   if ((cnt > 0) && (cnt <= 100))
+   		{
+   		   Vc_cnt = Vc_cnt+Vc;
+   		   Vbatt_cnt = Vbatt_cnt+Vbatt;
+   		   Ibatt_cnt = Ibatt_cnt+Ibatt;
+   		   Vsolar_cnt = Vsolar_cnt+Vsolar;
+   		   Vload_NC_cnt = Vload_NC_cnt+Vload_NC;
+   		   Iload_NC_cnt = Iload_NC_cnt+Iload_NC;
+   		   if (cnt == 10)
+   		   { Vc_solar = Vc_cnt/11;}
+   		}
+   	   if (cnt == 101)
+   		{
+           Vc_avg = Vc_cnt/100;
+           Vc_cnt = 0;
+           Vbatt_avg = Vbatt_cnt/100;
+           Vbatt_cnt = 0;
+           Ibatt_avg = Ibatt_cnt/100;
+           Ibatt_cnt = 0;
+           Vsolar_avg = Vsolar_cnt/100;
+           Vsolar_cnt = 0;
+           Vload_NC_avg = Vload_NC_cnt/100;
+           Vload_NC_cnt = 0;
+           Iload_NC_avg = Iload_NC_cnt/100;
+           Iload_NC_cnt = 0;
+
+           cnt = 0;
+
+           Vbatt_int = (int)(Vbatt_avg);
+           Vc_int = (int)(Vc_avg);
+           Vload_NC_int = (int)(Vload_NC_avg);
+
+           if (Ibatt_avg < 0){
+               Ibatt_buck_int = (int)((-1)*Ibatt_avg);
+               Ibatt_boost_int = 0;}
+           else if (Ibatt_avg > 0){
+               Ibatt_boost_int = (int)(Ibatt_avg);
+               Ibatt_buck_int = 0;}
+
+           if (iter == 1)
+           {
+               SOC_cnt++;
+               //              SOC_final = SOC_final + ((-1)*Ibatt_avg)*((float)(SOC_cnt)*100*500)/(480*3600*125);}
+               if (SOC_final > 31)
+               {
+                   SOC_final = SOC_init + (-1.0)*Ibatt_avg*SOC_cnt*0.009;
+                   SOC_final_int = (int)(SOC_final);
+               }
+               if (SOC_final <= 31)
+               {
+                   SOC_low_flag = 1;
+                   SOC_final = 31;
+               }
+           }
+           if (iter == 0)
+           {
+               SOC_cnt = 0;
+               SOC_low_flag = 0;
+               SOC_final = SOC_init;
+               SOC_final_int = (int)(SOC_final);
+           }
+   		}
+	 }
+
+	 // Calculating rms grid voltage Vg_rms for current protection
+	 // Interrupt freq = 12.5Khz, Grid Freq = 60Hz and cnt freq = interrupt freq.
+	 // Hence one period  = 12.5kHz/60Hz = 208.3
+
+	 if (rms_cnt < 208)
+	 {
+		 Vg_square = Vg_square + Vg*Vg;
+
+	 }
+	 if (rms_cnt == 208)
+	 {
+		 Vg_rms = sqrt(Vg_square/rms_cnt);
+		 Vg_square = 0;
+		 rms_cnt = 0;
+	 }
+	 current_protection();
+//	 batt_flag = 1;
+//	 PFC_flag = 1;
+//	 solar_flag = 1;
+//	 Inv_flag = 1;
+}
+
+void current_protection()
+{
+   // Overcurrent protection
+   // flag_overcurrent = 1 --> everything off, flag_overcurrent = 0 --> everything off
+
+	if ((Il>12) || (Ibatt>10) || (Isolar>10) || (Il<-12) || (Ibatt<-10)|| (Isolar<-10))
+//	if ((Il>10) || (Il<-10))
+		{flag_overcurrent = 1;
+		//GpioDataRegs.GPACLEAR.bit.GPIO31 = 0; // turn 31 on, turn LED LD1  on
+		}
+	else
+	    {
+		flag_overcurrent = 0;
+
+      //Battery switches off when battery current and voltages are beyond the acceptable range
+	  // batt_flag = 1 --> batt switches on, batt_flag = 0 --> batt switches off
+		if ((Vbatt_avg<20)||(Ibatt<-10) || (Vbatt_avg>60)||(Ibatt>10))
+	    	batt_flag = 0;
+	    else
+	    	batt_flag = 1;
+//
+		if ((Vsolar_avg<10)||(Isolar<-10) || (Vsolar_avg>45)||(Isolar>10))
+			solar_flag = 0;
+		else
+			solar_flag = 1;
+//       //Turn PFC switches off when grid voltage is too low or too high
+//	   // PFC_flag = 1 --> PFC switches on, PFC_flag = 0 --> PFC switches off
+		if((Vg_rms>100)||(Vg_rms<30))
+			PFC_flag = 0;
+		else
+			PFC_flag = 1;
+		//Inv_flag for the load inverter/DC-Dc converter
+		if((Vc_avg>250)||(Vc_avg<80))
+			Inv_flag = 0;
+		else
+			Inv_flag = 1;
+		 }
+}
+
+
+//PFC currently designed for 100V pk AC input.
+//void AC_DC_pfc()
+//{ if (PFC_flag == 1)
+//  {
+////	Vdc_cnt++;
+////	PLL PI loop for Vout
+////    if (Vdc_cnt > 60000)
+////    {
+////    	Vdc_cnt = 70000;
+////        rect_ind_flag = 1;
+//    if ((mode == 1)||(mode == 4))
+//    {
+//        rect_ind_flag = 1;
+//        DeltaVc_pi.ref = 170;
+//	    Vout_PI = PICAL(&DeltaVc_pi, Vc_avg);
+//
+////	    DeltaIl_pi.ref = Vout_PI*(Vg/100);
+////	    DeltaIl_pi.ref = 2*(Vg/100);
+//	    DeltaIl_pi.ref = Il_pk*(Vg/100);
+//	    Il_PI = PICAL(&DeltaIl_pi, Il);
+//
+//	    EPwm1Regs.CMPA.half.CMPA = Il_PI;
+//	    EPwm1Regs.CMPB = Il_PI;
+//
+//	    EPwm2Regs.CMPA.half.CMPA = Il_PI;
+//	    EPwm2Regs.CMPB = Il_PI;
+//    }
+//    else
+//    {
+//        rect_ind_flag = 0;
+//        //DeltaVc_pi.ref = 170;
+//        EPwm1Regs.CMPA.half.CMPA=0;
+//        EPwm1Regs.CMPB=PWM_INV_TIMER_TBPRD;
+//
+//        EPwm2Regs.CMPA.half.CMPA=0;
+//        EPwm2Regs.CMPB=PWM_INV_TIMER_TBPRD;
+//    }
+////    }
+////    else if (Vdc_cnt < 160000)
+////    {
+////    	//    	DeltaVc_pi.ref = 170;
+////    	rect_ind_flag = 0;
+////    	EPwm1Regs.CMPA.half.CMPA=0;
+////    	EPwm1Regs.CMPB=PWM_INV_TIMER_TBPRD;
+////
+////    	EPwm2Regs.CMPA.half.CMPA=0;
+////    	EPwm2Regs.CMPB=PWM_INV_TIMER_TBPRD;
+////    }
+////    else
+////    {
+////    	Vdc_cnt = 0;
+////    	//        DeltaVc_pi.ref = 170;
+////    }
+//
+//	//Call PI function for inputs DeltaVc_pi and Vout_sum. Output of PI is Vout_PI
+////    rect_ind_flag = 1;
+////    DeltaVc_pi.ref = 170;
+////	Vout_PI = PICAL(&DeltaVc_pi, Vc_avg);
+////
+////	DeltaIl_pi.ref = Vout_PI*(Vg/100);
+////	Il_PI = PICAL(&DeltaIl_pi, Il);
+////
+////	EPwm1Regs.CMPA.half.CMPA = Il_PI;
+////	EPwm1Regs.CMPB = Il_PI;
+////
+////    EPwm2Regs.CMPA.half.CMPA = Il_PI;
+////    EPwm2Regs.CMPB = Il_PI;
+//  }
+//  else
+//  {
+//	  EPwm1Regs.CMPA.half.CMPA=0;
+//	  EPwm1Regs.CMPB=PWM_INV_TIMER_TBPRD;
+//
+//	  EPwm2Regs.CMPA.half.CMPA=0;
+//	  EPwm2Regs.CMPB=PWM_INV_TIMER_TBPRD;
+//  }
+//
+//}
+
+
+void Batt()
+{
+  if (batt_flag == 1)
+  {
+		cnt_batt++;
+//		if (Batt_command < 5)
+//		    Batt_command = Batt_command;
+//		else if (Batt_command >= 5 && Batt_command <9)
+//		    Batt_command = Batt_command - 6;
+//		else if (Batt_command >=13)
+//		    Batt_command = Batt_command - 12;
+//		else
+//		    Batt_command = 6;
+//		if (cnt_batt < 40000)
+//		{
+//		  if (Vc_avg < 155)
+//			 cnt_batt = 60000;
+//			 Batt_boost();
+//		  if (Vc_avg >= 165)
+//			  Batt_charge();
+//			EPwm3Regs.CMPA.half.CMPA=0;
+//			EPwm3Regs.CMPB=PWM_INV_TIMER_TBPRD;
+//		}
+//  	     if (cnt_batt >= 40000)
+//  	     {
+//  	    	 cnt_batt = 60000;
+//  	    	 Batt_boost();
+//  	    	 Batt_charge();
+//  	     }
+		if (cnt_batt > 25010)
+		{
+		    cnt_batt = 30000;
+		    if (Batt_command <5)
+		        Batt_charge();
+		    else if (Batt_command >= 5 && Batt_command < 9)
+		        Batt_boost();
+		    else
+		    {   boost_cnt = 0;
+		    test_cnt = 0;
+		    flag_battboost = 0;
+		    flag_battcharge = 0;
+		    EPwm3Regs.CMPA.half.CMPA=0;
+		    EPwm3Regs.CMPB=PWM_INV_TIMER_TBPRD;
+
+		    DeltaVcbatt_pi.err_old = 0;
+		    DeltaVcbatt_pi.out_old = 0;
+		    DeltaVcbatt_pi.max = 7;//DVPIMAX;
+		    DeltaVcbatt_pi.min = 0.1;//DVPIMIN;
+		    DeltaVcbatt_pi.ref = 1;//DVREF;
+
+		    DeltaIbatt_pi.err_old = 0;
+		    DeltaIbatt_pi.out_old = 0;
+		    DeltaIbatt_pi.max = period-0.1*period;//DVPIMAX;
+		    DeltaIbatt_pi.min = 0.5*period;//DVPIMIN;
+		    DeltaIbatt_pi.ref = 1;//DVREF
+		    }
+
+		}
+
+
+  }
+  else
+  {
+      EPwm3Regs.CMPA.half.CMPA=0;
+      EPwm3Regs.CMPB=PWM_INV_TIMER_TBPRD;
+  }
+}
+
+
+void Batt_boost()
+{
+	boost_cnt++;
+	test_cnt = 0;
+	flag_battboost = 1;
+	flag_battcharge = 0;
+	if (SOC_low_flag == 0)
+	{
+	    if (boost_cnt == 0)
+	    {
+	        Vcbattout_PI = 0.1;
+	        DeltaVcbatt_pi.err_old = 0;
+	        DeltaVcbatt_pi.out_old = 0;
+	        DeltaVcbatt_pi.max = 7;//DVPIMAX;
+	        DeltaVcbatt_pi.min = 0.1;//DVPIMIN;
+	        DeltaVcbatt_pi.ref = 1;//DVREF;
+
+	        DeltaIbatt_pi.err_old = 0;
+	        DeltaIbatt_pi.out_old = 0;
+	        DeltaIbatt_pi.max = period-0.1*period;//DVPIMAX;
+	        DeltaIbatt_pi.min = 0.5*period;//DVPIMIN;
+	        DeltaIbatt_pi.ref = 1;//DVREF;
+	        //	    Ibatt_PI = 300;
+	    }
+	    if (boost_cnt>0 && boost_cnt<= 10000)
+	    {
+	        DeltaIbatt_pi.max = period-(0.2*period);
+	        DeltaIbatt_pi.min = 0.4*period;
+	        DeltaVcbatt_pi.ref = 169;
+	        //		DeltaVcbatt_pi.ref = 100;
+	        Vcbattout_PI = PICAL(&DeltaVcbatt_pi, Vc_avg);
+//	        DeltaIbatt_pi.ref = Vcbattout_PI;
+	        		DeltaIbatt_pi.ref = 1.5;
+	        Ibatt_PI = (period - (PICAL(&DeltaIbatt_pi, Ibatt)));;
+	        EPwm3Regs.CMPA.half.CMPA = Ibatt_PI;
+	        EPwm3Regs.CMPB = Ibatt_PI;
+	        EPwm3Regs.ETCLR.bit.INT = 1;
+	    }
+	    else
+	    {   boost_cnt = 30000;
+	    DeltaIbatt_pi.max = period-(0.1*period);
+	    DeltaIbatt_pi.min = 0.1*period;
+	    DeltaVcbatt_pi.ref = 169;
+	    Vcbattout_PI = PICAL(&DeltaVcbatt_pi, Vc_avg);
+//	    DeltaIbatt_pi.ref = Vcbattout_PI;
+	    	   DeltaIbatt_pi.ref = 1.5;
+	    Ibatt_PI = (period - (PICAL(&DeltaIbatt_pi, Ibatt)));;
+	    EPwm3Regs.CMPA.half.CMPA = Ibatt_PI;
+	    EPwm3Regs.CMPB = Ibatt_PI;
+	    EPwm3Regs.ETCLR.bit.INT = 1;
+	    }
+	}
+	else
+	{
+	    boost_cnt = 0;
+	    test_cnt = 0;
+	    flag_battboost = 0;
+	    flag_battcharge = 0;
+	    EPwm3Regs.CMPA.half.CMPA=0;
+	    EPwm3Regs.CMPB=PWM_INV_TIMER_TBPRD;
+	}
+}
+
+
+
+void Batt_charge()
+{
+	flag_battboost = 0;
+    flag_battcharge = 1;
+    test_cnt++;
+    boost_cnt = 0;
+   // GpioCtrlRegs.GPBPUD.bit.GPIO34 = 0;   // Enable pullup on GPIO1
+  //  GpioDataRegs.GPBCLEAR.bit.GPIO34 = 1; // turn 34 off, turn LED LD3  off
+    // GpioCtrlRegs.GPAPUD.bit.GPIO31 = 0;   // Enable pullup on GPIO1
+//    if (Vc_avg > 100)
+//    {
+        if (test_cnt == 0)
+        {
+            //          GpioDataRegs.GPBSET.bit.GPIO34 = 1;
+            //          DeltaIbatt_pi.err_old = 0;
+            //          DeltaIbatt_pi.out_old = 0;
+            //          DeltaIbatt_pi.max = period-0.1*period;//DVPIMAX;
+            //          DeltaIbatt_pi.min = 0.65*period;//DVPIMIN
+            DeltaIbatt_pi.err_old = 0;
+            DeltaIbatt_pi.out_old = 0;
+            DeltaIbatt_pi.max = period-0.1*period;//DVPIMAX;
+            DeltaIbatt_pi.min = 0.5*period;//DVPIMIN;
+            DeltaIbatt_pi.ref = -1;//DVREF;
+            EPwm3Regs.CMPA.half.CMPA=0;
+            EPwm3Regs.CMPB=PWM_INV_TIMER_TBPRD;
+        }
+        if (test_cnt > 0 && test_cnt <= 7000)
+        {
+//            DeltaIbatt_pi.err_old = 0;
+//            DeltaIbatt_pi.out_old = 0;
+            DeltaIbatt_pi.max = period-0.1*period;//DVPIMAX
+            DeltaIbatt_pi.min = 0.6*period;
+            DeltaIbatt_pi.ref = -1;
+            Ibatt_PI = (period - (PICAL(&DeltaIbatt_pi, Ibatt)));
+            EPwm3Regs.CMPA.half.CMPA = Ibatt_PI;
+            EPwm3Regs.CMPB = Ibatt_PI;
+            EPwm3Regs.ETCLR.bit.INT = 1;
+        }
+        if (test_cnt >= 7000)
+        {
+            GpioDataRegs.GPBCLEAR.bit.GPIO34 = 1;
+            test_cnt = 30000;
+            DeltaIbatt_pi.min = 0.1*period;
+            DeltaIbatt_pi.ref = -1;
+            Ibatt_PI = (period - (PICAL(&DeltaIbatt_pi, Ibatt)));
+
+            //            if (Ibatt_PI<900)
+            //                GpioDataRegs.GPACLEAR.bit.GPIO31 = 1; // turn 31 off, turn LED LD1  off
+            //            else
+            //                GpioDataRegs.GPASET.bit.GPIO31 = 1; // turn 31 off, turn LED LD1  off
+
+            EPwm3Regs.CMPA.half.CMPA = Ibatt_PI;
+            EPwm3Regs.CMPB = Ibatt_PI;
+            EPwm3Regs.ETCLR.bit.INT = 1;
+        }
+//    }
+//    else
+//    {
+//        EPwm3Regs.CMPA.half.CMPA=0;
+//        EPwm3Regs.CMPB=PWM_INV_TIMER_TBPRD;
+//    }
+}
+
+void Solar()
+{ if (solar_flag == 1)
+  {
+    Solar_command = mode%2;
+    if (Solar_command == 1)
+    {
+        solar_cnt++;
+        if (solar_cnt <= 12000)
+        {
+            EPwm4Regs.CMPA.half.CMPA=0;
+            EPwm4Regs.CMPB=PWM_INV_TIMER_TBPRD;
+            DeltaIsolar_pi.err_old = 0;
+            DeltaIsolar_pi.out_old = 0;
+//            DeltaIsolar_pi.ki = ki_Isolar; //DVKI;
+//            DeltaIsolar_pi.kp = kp_Isolar;//DVKP
+            //      DeltaIbatt_pi.ki = 1; //DVKI;
+            //      DeltaIbatt_pi.kp = 20;//DVKP;
+            //      DeltaIbatt_pi.ki = 5; //DVKI;
+            //      DeltaIbatt_pi.kp = 10;//DVKP;
+            DeltaIsolar_pi.max = period-0.1*period;//DVPIMAX;
+            DeltaIsolar_pi.min = 0.5*period;//DVPIMIN;
+            DeltaIsolar_pi.ref = 1;//DVREF;
+        }
+        if (solar_cnt>12000 && solar_cnt <= 20000)
+        {
+//            if (flag_battboost == 1 && flag_battcharge == 0)
+//                DeltaIsolar_pi.max = period-(0.1*period);
+//            if (flag_battcharge == 1 && flag_battboost == 0 && rect_ind_flag == 0)
+//                DeltaIsolar_pi.max = period-(0.3*period);
+//            else if (flag_battcharge == 0 && flag_battboost == 0 && rect_ind_flag == 0)
+//                DeltaIsolar_pi.max = period-(0.3*period);
+//            else
+                DeltaIsolar_pi.max = period-(0.1*period);
+            DeltaIsolar_pi.min = 0.2*period;
+            DeltaIsolar_pi.ref = 0.5;
+            Isolar_PI = (period - (PICAL(&DeltaIsolar_pi, Isolar)));;
+            EPwm4Regs.CMPA.half.CMPA = Isolar_PI;
+            EPwm4Regs.CMPB = Isolar_PI;
+            EPwm4Regs.ETCLR.bit.INT = 1;
+        }
+        if (solar_cnt > 20000 )
+        {
+            solar_cnt = 31000;
+            DeltaIsolar_pi.max = period-(0.1*period);
+            DeltaIsolar_pi.min = 0.1*period;
+            DeltaVcsolar_pi.ref = 130;
+            Vcsolarout_PI = PICAL(&DeltaVcsolar_pi, Vc_solar);
+
+//            if (rect_ind_flag == 1 || flag_battboost == 1)
+//            { DeltaIsolar_pi.ref = ref_Isolar;}
+//            else
+//            {
+//                DeltaIsolar_pi.ref = Vcsolarout_PI;
+                DeltaIsolar_pi.ref = ref_Isolar;
+//            }
+            Isolar_PI = (period - (PICAL(&DeltaIsolar_pi, Isolar)));
+//            Isolar_PI = ref_Isolar_PI;
+            EPwm4Regs.CMPA.half.CMPA = Isolar_PI;
+            EPwm4Regs.CMPB = Isolar_PI;
+            //		EPwm4Regs.CMPA.half.CMPA = 1500;
+            //		EPwm4Regs.CMPB = 1500;
+            EPwm4Regs.ETCLR.bit.INT = 1;
+        }
+    }
+    else
+    {
+        solar_cnt = 0;
+        EPwm4Regs.CMPA.half.CMPA=0;
+        EPwm4Regs.CMPB=PWM_INV_TIMER_TBPRD;
+        DeltaIsolar_pi.err_old = 0;
+        DeltaIsolar_pi.out_old = 0;
+        //            DeltaIsolar_pi.ki = ki_Isolar; //DVKI;
+        //            DeltaIsolar_pi.kp = kp_Isolar;//DVKP
+        //      DeltaIbatt_pi.ki = 1; //DVKI;
+        //      DeltaIbatt_pi.kp = 20;//DVKP;
+        //      DeltaIbatt_pi.ki = 5; //DVKI;
+        //      DeltaIbatt_pi.kp = 10;//DVKP;
+        DeltaIsolar_pi.max = period-0.1*period;//DVPIMAX;
+        DeltaIsolar_pi.min = 0.5*period;//DVPIMIN;
+        DeltaIsolar_pi.ref = 1;
+    }
+//	}
+  }
+
+else
+  {
+	  EPwm4Regs.CMPA.half.CMPA=0;
+	  EPwm4Regs.CMPB=PWM_INV_TIMER_TBPRD;
+  }
+}
+
+void DC_AC_VFD()
+{
+	if(Inv_flag==1)
+	{
+//		Inv_on_cnt++;
+//		if (Inv_on_cnt > 40000)
+//		{
+//			Inv_on_cnt = 50000;
+	    if (Batt_command < 4)
+	        Batt_command_ref = Batt_command;
+	    else if (Batt_command > 4 && Batt_command < 9)
+	        Batt_command_ref = Batt_command-4;
+	    else
+	        Batt_command_ref = Batt_command-8;
+
+	    if (Batt_command_ref < 3)
+	        NC_load_command = 1;
+	    else
+	        NC_load_command = 0;
+
+	    if (NC_load_command == 1)
+			{
+			    //			    GpioDataRegs.GPBCLEAR.bit.GPIO34 = 1;
+			    //			              test_cnt = 30000;
+			    //			              DeltaIbatt_pi.min = 0.1*period;
+			    //			              DeltaIbatt_pi.ref = -0.7;
+			    //			              Ibatt_PI = (period - (PICAL(&DeltaIbatt_pi, Ibatt)));
+
+			    Inv_on_cnt++;
+			    if(Inv_on_cnt < 10000)
+			    {
+			        DeltaVload_pi.max = 0.5;
+			        DeltaVload_pi.min = 0.1;
+			        DeltaVload_pi.ref  = Vload_ref;
+			        Vload_PI = PICAL(&DeltaVload_pi, Vload_NC_avg);
+			        //              Vload_PI = DeltaVload_pi.max - Vload_PI;
+
+			        DeltaIload_pi.max = period-0.3*period;
+			        DeltaIload_pi.min = 0.1*period;
+			        //              DeltaIload_pi.ref  = Iload_ref;
+			        DeltaIload_pi.ref  = Vload_PI;
+			        Iload_PI = PICAL(&DeltaIload_pi, Iload_NC);
+			    }
+			    if (Inv_on_cnt >= 10000)
+			    {
+			        Inv_on_cnt = 20000;
+			        DeltaVload_pi.max = 1;
+			        DeltaVload_pi.min = 0.1;
+			        DeltaVload_pi.ref  = Vload_ref;
+			        Vload_PI = PICAL(&DeltaVload_pi, Vload_NC_avg);
+			        //			    Vload_PI = DeltaVload_pi.max - Vload_PI;
+
+			        DeltaIload_pi.max = period-0.1*period;
+			        DeltaIload_pi.min = 0.1*period;
+			        //			    DeltaIload_pi.ref  = Iload_ref;
+			        DeltaIload_pi.ref  = Vload_PI;
+			        Iload_PI = PICAL(&DeltaIload_pi, Iload_NC);
+			    }
+
+//			    Vload_PI = kp_Iload*(Vload_ref-Iload_NC);
+
+			    EPwm6Regs.CMPA.half.CMPA=Iload_PI;
+			    EPwm6Regs.CMPB=Iload_PI;
+
+
+			    EPwm6Regs.ETCLR.bit.INT = 1;
+//			    EPwm6Regs.CMPA.half.CMPA=450;
+//			    EPwm6Regs.CMPB=450;
+
+			}
+			else
+			{
+			    EPwm6Regs.CMPA.half.CMPA=PWM_INV_TIMER_TBPRD;
+			    EPwm6Regs.CMPB=0;
+//			    DeltaIload_pi.max = period-0.3*period;
+//			    DeltaIload_pi.min = 0.3*period;
+//			    DeltaIload_pi.err_old = 0;
+//			    DeltaIload_pi.out_old = 0;
+//
+//			    DeltaVload_pi.max = period-0.3*period;
+//			    DeltaVload_pi.min = 0.3*period;
+//			    DeltaVload_pi.err_old = 0;
+//			    DeltaVload_pi.out_old = 0;
+			    Inv_on_cnt = 0;
+			    DeltaIload_pi.max = period-0.3*period;
+			    DeltaIload_pi.min = 0.3*period;
+			    DeltaIload_pi.err_old = 0;
+			    DeltaIload_pi.out_old = 0;
+			    DeltaIload_pi.ki = ki_Iload;
+			    DeltaIload_pi.kp = kp_Iload;
+			    DeltaIload_pi.ref = 1;
+
+			    DeltaVload_pi.max = period-0.3*period;
+			    DeltaVload_pi.min = 0.3*period;
+			    DeltaVload_pi.err_old = 0;
+			    DeltaVload_pi.out_old = 0;
+			    DeltaVload_pi.ki = ki_Vload;
+			    DeltaVload_pi.kp = kp_Vload;
+			    DeltaVload_pi.ref = 1;
+			}
+
+    }
+    else
+    {
+      	EPwm6Regs.CMPA.half.CMPA=PWM_INV_TIMER_TBPRD;
+    	EPwm6Regs.CMPB=0;
+    }
+
+    // Clear INT flag for this timer
+    EPwm6Regs.ETCLR.bit.INT = 1;
+
+
+}
+
+
+void relay_test()
+{
+//    relay_cnt++;
+
+//    if (relay_cnt < 10000)
+//    {
+    if (Batt_command == 1 || Batt_command == 3 || Batt_command == 5)
+    {
+//        k = 0;
+//               EALLOW;
+//               GpioDataRegs.GPCCLEAR.bit.GPIO87 = 1;
+//               GpioDataRegs.GPCSET.bit.GPIO87 = 0;// turn 87 (relay) off
+//               EDIS;
+        k = 1;
+        EALLOW;
+        GpioDataRegs.GPCCLEAR.bit.GPIO87 = 0;
+        GpioDataRegs.GPCSET.bit.GPIO87 = 1;// turn 87 (relay) on
+        EDIS;
+    }
+    else
+    {
+        k = 0;
+        EALLOW;
+        GpioDataRegs.GPCCLEAR.bit.GPIO87 = 1;
+        GpioDataRegs.GPCSET.bit.GPIO87 = 0;// turn 87 (relay) off
+        EDIS;
+    }
+}
+
+
+void Data_Init()
+{
+		// PI
+		// Vc1 - Vc2
+		DeltaVc_pi.err_old = 0;
+		DeltaVc_pi.out_old = 0;
+//		DeltaVc_pi.ki = 50; //DVKI;
+//		DeltaVc_pi.kp = 0.1;//DVKP;
+		DeltaVc_pi.ki = 0.0001; //DVKI;
+		DeltaVc_pi.kp = 0.01;//DVKP;
+		DeltaVc_pi.max = 8;//DVPIMAX;
+		DeltaVc_pi.min = 0.1;//DVPIMIN;
+		DeltaVc_pi.ref = 1;//DVREF;
+
+		DeltaIl_pi.err_old = 0;
+		DeltaIl_pi.out_old = 0;
+		DeltaIl_pi.ki = 10; //DVKI;
+		DeltaIl_pi.kp = 80;//DVKP;
+//		DeltaIl_pi.ki = 7; //DVKI;
+//		DeltaIl_pi.kp = 72;//DVKP;
+		DeltaIl_pi.max = period-0.1*period;//DVPIMAX;
+		DeltaIl_pi.min = 0.1*period;//DVPIMIN;
+		DeltaIl_pi.ref = 1;//DVREF;
+
+		DeltaVcbatt_pi.err_old = 0;
+		DeltaVcbatt_pi.out_old = 0;
+//		DeltaVcbatt_pi.ki = 0.0001; //DVKI;
+//		DeltaVcbatt_pi.kp = 0.01;//DVKP;
+		DeltaVcbatt_pi.ki = 0.0001; //DVKI;
+		DeltaVcbatt_pi.kp = 0.04;//DVKP;
+		DeltaVcbatt_pi.max = 7;//DVPIMAX;
+		DeltaVcbatt_pi.min = 0.1;//DVPIMIN;
+		DeltaVcbatt_pi.ref = 1;//DVREF;
+
+		DeltaIbatt_pi.err_old = 0;
+		DeltaIbatt_pi.out_old = 0;
+		DeltaIbatt_pi.ki = 1; //DVKI;
+		DeltaIbatt_pi.kp = 20;//DVKP
+//		DeltaIbatt_pi.ki = 1; //DVKI;
+//		DeltaIbatt_pi.kp = 20;//DVKP;
+//		DeltaIbatt_pi.ki = 5; //DVKI;
+//		DeltaIbatt_pi.kp = 10;//DVKP;
+		DeltaIbatt_pi.max = period-0.1*period;//DVPIMAX;
+		DeltaIbatt_pi.min = 0.5*period;//DVPIMIN;
+		DeltaIbatt_pi.ref = 1;//DVREF;
+
+		DeltaVbatt_pi.err_old = 0;
+		DeltaVbatt_pi.out_old = 0;
+		DeltaVbatt_pi.ki = 0.005; //DVKI;
+		DeltaVbatt_pi.kp = 0.05;//DVKP;
+		DeltaVbatt_pi.max = 3.5;//DVPIMAX;
+		DeltaVbatt_pi.min = 0.1;//DVPIMIN;
+//		        DeltaVbatt_pi.max = period-0.1*period;//DVPIMAX;
+//				DeltaVbatt_pi.min = 0.1*period;//DVPIMIN;
+		DeltaVbatt_pi.ref = 1;//DVREF;
+
+		DeltaVcsolar_pi.err_old = 0;
+		DeltaVcsolar_pi.out_old = 0;
+//				DeltaVcbatt_pi.ki = 0.0001; //DVKI;
+//				DeltaVcbatt_pi.kp = 0.1;//DVKP;
+		DeltaVcsolar_pi.ki = ki_Vsolar; //DVKI;
+		DeltaVcsolar_pi.kp = kp_Vsolar;//DVKP;
+		DeltaVcsolar_pi.max = 2;//DVPIMAX;
+		DeltaVcsolar_pi.min = 0.1;//DVPIMIN;
+		DeltaVcsolar_pi.ref = 1;//DVREF;
+
+		DeltaIsolar_pi.err_old = 0;
+		DeltaIsolar_pi.out_old = 0;
+		DeltaIsolar_pi.ki = ki_Isolar; //DVKI;
+		DeltaIsolar_pi.kp = kp_Isolar;//DVKP
+		//		DeltaIbatt_pi.ki = 1; //DVKI;
+		//		DeltaIbatt_pi.kp = 20;//DVKP;
+		//		DeltaIbatt_pi.ki = 5; //DVKI;
+		//		DeltaIbatt_pi.kp = 10;//DVKP;
+		DeltaIsolar_pi.max = period-0.1*period;//DVPIMAX;
+		DeltaIsolar_pi.min = 0.5*period;//DVPIMIN;
+		DeltaIsolar_pi.ref = 1;//DVREF;
+
+		DeltaIload_pi.max = period-0.3*period;
+		DeltaIload_pi.min = 0.3*period;
+		DeltaIload_pi.err_old = 0;
+		DeltaIload_pi.out_old = 0;
+		DeltaIload_pi.ki = ki_Iload;
+		DeltaIload_pi.kp = kp_Iload;
+		DeltaIload_pi.ref = 1;
+
+	    DeltaVload_pi.max = period-0.3*period;
+	    DeltaVload_pi.min = 0.3*period;
+	    DeltaVload_pi.err_old = 0;
+	    DeltaVload_pi.out_old = 0;
+	    DeltaVload_pi.ki = ki_Vload;
+	    DeltaVload_pi.kp = kp_Vload;
+	    DeltaVload_pi.ref = 1;
+}
+
+// -------- PI Loop ---------
+	float32 PICAL(PIST* st, float32 new)
+	{
+	st->err_new = st->ref - new;
+	st->out=st->out_old+(st->ki+st->kp)*st->err_new-st->kp*st->err_old;
+	if(st->out < st->min)
+	{
+	st->out=st->min;
+	}
+	else if(st->out > st->max)
+	{
+	st->out=st->max;
+	}
+	st->err_old=st->err_new;
+	st->out_old=st->out;
+	return st->out;
+	}
+
+	//------------ SCI Communiaction ---------------
+	// Test 1,SCIA  DLB, 8-bit word, baud rate 0x000F, default, 1 STOP bit, no parity
+	void scib_echoback_init()
+	{
+	    // Note: Clocks were turned on to the SCIA peripheral
+	    // in the InitSysCtrl() function
+
+	    ScibRegs.SCICCR.all =0x0007;   // 1 stop bit,  No loopback
+	    // No parity,8 char bits,
+	    // async mode, idle-line protocol
+	    ScibRegs.SCICTL1.all =0x0003;  // enable TX, RX, internal SCICLK,
+	    // Disable RX ERR, SLEEP, TXWAKE
+	    ScibRegs.SCICTL2.all =0x0003;
+	    ScibRegs.SCICTL2.bit.TXINTENA =1;
+	    ScibRegs.SCICTL2.bit.RXBKINTENA =1;
+#if (CPU_FRQ_150MHZ)
+	    ScibRegs.SCIHBAUD    =0x0001;  // 9600 baud @LSPCLK = 37.5MHz.
+	    ScibRegs.SCILBAUD    =0x00E7;
+#endif
+#if (CPU_FRQ_100MHZ)
+	    ScibRegs.SCIHBAUD    =0x0001;  // 9600 baud @LSPCLK = 20MHz.
+	    ScibRegs.SCILBAUD    =0x0044;
+#endif
+	    ScibRegs.SCICTL1.all =0x0023;  // Relinquish SCI from Reset
+	}
+
+	// Transmit a character from the SCI
+	void scib_xmit(int a)
+	{
+	    while (ScibRegs.SCIFFTX.bit.TXFFST != 0) {}
+	    ScibRegs.SCITXBUF=a;
+	}
+
+	void scib_msg(char * msg)
+	{
+	    int i;
+	    i = 0;
+	    while(msg[i] != '\0')
+	    {
+	        scib_xmit(msg[i]);
+	        i++;
+	    }
+	}
+
+	// Initialize the SCI FIFO
+	void scib_fifo_init()
+	{
+	    ScibRegs.SCIFFTX.all=0xE040;
+	    ScibRegs.SCIFFRX.all=0x204f;
+	    ScibRegs.SCIFFCT.all=0x0;
+	}
+
+
+
